@@ -100,10 +100,82 @@ def parse_label(output_text: str) -> int:
         return 0
 
 
-# Sampling params for classification (greedy, single token)
+def extract_confidence(output) -> tuple[float, float]:
+    """
+    Extract confidence and prob_positive from vLLM output logprobs.
+    
+    Returns:
+        (confidence, prob_positive) where:
+        - confidence: probability of the chosen token
+        - prob_positive: probability of "1" (positive class)
+    """
+    import math
+    
+    # Default values if we can't extract logprobs
+    default_confidence = 1.0
+    default_prob_positive = 0.5
+    
+    try:
+        # Get the first (and only) generated token's logprobs
+        logprobs_list = output.outputs[0].logprobs
+        if not logprobs_list or len(logprobs_list) == 0:
+            return default_confidence, default_prob_positive
+        
+        # logprobs_list[0] contains the logprobs for the first generated token
+        # It's a dict mapping token_id -> Logprob object
+        token_logprobs = logprobs_list[0]
+        
+        # Find probabilities for "0" and "1" tokens
+        prob_0 = None
+        prob_1 = None
+        chosen_prob = None
+        
+        for token_id, logprob_obj in token_logprobs.items():
+            # logprob_obj has .logprob (float) and .decoded_token (str)
+            decoded = logprob_obj.decoded_token.strip()
+            prob = math.exp(logprob_obj.logprob)
+            
+            if decoded == "0":
+                prob_0 = prob
+            elif decoded == "1":
+                prob_1 = prob
+            
+            # The first entry is typically the chosen token
+            if chosen_prob is None:
+                chosen_prob = prob
+        
+        # Get the chosen token's probability as confidence
+        if chosen_prob is not None:
+            confidence = chosen_prob
+        else:
+            confidence = default_confidence
+        
+        # Calculate prob_positive
+        if prob_1 is not None and prob_0 is not None:
+            # Normalize to get calibrated probability between 0 and 1
+            total = prob_0 + prob_1
+            prob_positive = prob_1 / total if total > 0 else 0.5
+        elif prob_1 is not None:
+            prob_positive = prob_1
+        elif prob_0 is not None:
+            prob_positive = 1.0 - prob_0
+        else:
+            # Fall back based on chosen token
+            chosen_text = output.outputs[0].text.strip()
+            prob_positive = confidence if chosen_text.startswith("1") else (1.0 - confidence)
+        
+        return round(confidence, 4), round(prob_positive, 4)
+        
+    except Exception as e:
+        logger.warning(f"Could not extract logprobs: {e}")
+        return default_confidence, default_prob_positive
+
+
+# Sampling params for classification (greedy, single token, with logprobs for confidence)
 SAMPLING_PARAMS = SamplingParams(
     temperature=0,
     max_tokens=1,
+    logprobs=5,  # Get top 5 token probabilities for confidence estimation
 )
 
 
@@ -116,6 +188,8 @@ class LabelRequest(BaseModel):
 class LabelResponse(BaseModel):
     label: int
     raw_output: str
+    confidence: float = Field(..., description="Probability of the chosen token (0 or 1)")
+    prob_positive: float = Field(..., description="Probability of label=1 (positive class)")
 
 
 class BatchItem(BaseModel):
@@ -132,6 +206,8 @@ class BatchResultItem(BaseModel):
     id: str
     label: int
     raw_output: str
+    confidence: float = Field(..., description="Probability of the chosen token (0 or 1)")
+    prob_positive: float = Field(..., description="Probability of label=1 (positive class)")
 
 
 class BatchResponse(BaseModel):
@@ -202,8 +278,14 @@ async def label_content(request: LabelRequest):
         outputs = llm.generate([prompt], SAMPLING_PARAMS)
         raw_output = outputs[0].outputs[0].text.strip()
         label_value = parse_label(raw_output)
+        confidence, prob_positive = extract_confidence(outputs[0])
         
-        return LabelResponse(label=label_value, raw_output=raw_output)
+        return LabelResponse(
+            label=label_value,
+            raw_output=raw_output,
+            confidence=confidence,
+            prob_positive=prob_positive
+        )
     except Exception as e:
         logger.exception("Error during inference")
         raise HTTPException(status_code=500, detail=str(e))
@@ -245,10 +327,13 @@ async def batch_label(request: BatchRequest):
         for item, output in zip(request.items, outputs):
             raw_output = output.outputs[0].text.strip()
             label_value = parse_label(raw_output)
+            confidence, prob_positive = extract_confidence(output)
             results.append(BatchResultItem(
                 id=item.id,
                 label=label_value,
-                raw_output=raw_output
+                raw_output=raw_output,
+                confidence=confidence,
+                prob_positive=prob_positive
             ))
         
         elapsed = time.time() - start_time

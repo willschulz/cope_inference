@@ -44,8 +44,10 @@ Request:
 
 Response:
 {
-  "label": 0,        // 0 = does not match policy, 1 = matches policy
-  "raw_output": "0"  // raw model output token
+  "label": 0,           // 0 = does not match policy, 1 = matches policy
+  "raw_output": "0",    // raw model output token
+  "confidence": 0.97,   // probability of the chosen token (0 or 1)
+  "prob_positive": 0.03 // probability of label=1 (positive class)
 }
 
 
@@ -67,14 +69,20 @@ Request:
 Response:
 {
   "results": [
-    {"id": "tweet_123", "label": 0, "raw_output": "0"},
-    {"id": "tweet_456", "label": 1, "raw_output": "1"},
+    {"id": "tweet_123", "label": 0, "raw_output": "0", "confidence": 0.98, "prob_positive": 0.02},
+    {"id": "tweet_456", "label": 1, "raw_output": "1", "confidence": 0.94, "prob_positive": 0.94},
     ...
   ],
   "processed": 100,
   "elapsed_seconds": 45.2,
   "items_per_second": 2.21
 }
+
+RESPONSE FIELDS:
+- label: Binary classification (0 or 1)
+- raw_output: The raw token output from the model
+- confidence: Probability the model assigned to its chosen answer (0.0-1.0)
+- prob_positive: Probability of label=1, useful for ranking or custom thresholds
 
 BATCH LIMITS:
 - Maximum 100 items per request
@@ -175,6 +183,11 @@ def process_tweets(tweets, batch_size=100, workers=2):
 # Usage:
 # tweets = [{"id": str(i), "content": row["text"]} for i, row in df.iterrows()]
 # results = process_tweets(tweets)
+
+# Using confidence scores:
+# - Filter uncertain predictions: [r for r in results if r["confidence"] < 0.7]
+# - Sort by positive probability: sorted(results, key=lambda r: r["prob_positive"], reverse=True)
+# - Custom threshold: label = 1 if r["prob_positive"] > 0.3 else 0
 
 
 CURL EXAMPLE:
