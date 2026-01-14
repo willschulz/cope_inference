@@ -1,0 +1,230 @@
+================================================================================
+CoPE-A-9B CONTENT CLASSIFICATION API
+================================================================================
+
+SERVICE ENDPOINT
+----------------
+Tailscale IP: 100.97.88.105  (PREFERRED - use this from datascience.manx-celsius.ts.net)
+GCP Internal IP: 10.162.0.3
+Port: 8000
+
+Base URL: http://100.97.88.105:8000
+
+Tailscale hostname (if MagicDNS enabled): http://coper-v1.manx-celsius.ts.net:8000
+
+
+================================================================================
+ENDPOINTS
+================================================================================
+
+1. HEALTH CHECK
+---------------
+GET /health
+
+Response:
+{
+  "status": "healthy",
+  "model_loaded": true,
+  "gpu_available": true,
+  "gpu_name": "NVIDIA L4",
+  "gpu_memory_allocated_gb": 6.11
+}
+
+
+2. SINGLE ITEM CLASSIFICATION
+-----------------------------
+POST /label
+Content-Type: application/json
+
+Request:
+{
+  "policy": "<policy text>",
+  "content": "<text to classify>"
+}
+
+Response:
+{
+  "label": 0,        // 0 = does not match policy, 1 = matches policy
+  "raw_output": "0"  // raw model output token
+}
+
+
+3. BATCH CLASSIFICATION (RECOMMENDED FOR BULK)
+----------------------------------------------
+POST /batch
+Content-Type: application/json
+
+Request:
+{
+  "policy": "<policy text - applied to ALL items>",
+  "items": [
+    {"id": "tweet_123", "content": "First tweet text"},
+    {"id": "tweet_456", "content": "Second tweet text"},
+    ...
+  ]
+}
+
+Response:
+{
+  "results": [
+    {"id": "tweet_123", "label": 0, "raw_output": "0"},
+    {"id": "tweet_456", "label": 1, "raw_output": "1"},
+    ...
+  ],
+  "processed": 100,
+  "elapsed_seconds": 45.2,
+  "items_per_second": 2.21
+}
+
+BATCH LIMITS:
+- Maximum 100 items per request
+- Results returned in same order as input
+- IDs are preserved for matching back to source data
+
+
+================================================================================
+POLICY FORMAT (CoPE Specification)
+================================================================================
+
+Policies must follow this structure:
+
+# Criteria
+
+## Overview
+[Brief description of what this policy classifies]
+
+## Definition of Terms
+- Term1: Definition
+- Term2: Definition
+
+## Interpretation of Language
+- [Guidance for ambiguous cases]
+
+## Definition of Labels
+
+### (LABEL_CODE): Label Name
+
+#### Includes
+- Criteria1: What qualifies content for this label
+- Criteria2: Another qualifying characteristic
+
+#### Excludes
+- Exception1: What does NOT qualify even if similar
+- Exception2: Another exception
+
+
+================================================================================
+RECOMMENDED USAGE FOR 2M TWEETS
+================================================================================
+
+THROUGHPUT: ~2-3 items/second (varies by content length)
+ESTIMATED TIME: ~10-15 days for 2M tweets at full serial processing
+
+OPTIMIZATION STRATEGIES:
+
+1. USE BATCH ENDPOINT
+   - Send 100 items per request
+   - Reduces HTTP overhead significantly
+
+2. PARALLEL REQUESTS (carefully)
+   - The GPU processes one item at a time
+   - 2-4 concurrent batch requests may help hide network latency
+   - More than that will just queue and not improve throughput
+
+3. PRE-FILTER IF POSSIBLE
+   - If you can filter out obviously benign content beforehand, do so
+   - Only send content that needs classification
+
+4. CHECKPOINT PROGRESS
+   - Save results frequently (every 10K items)
+   - Track processed IDs to resume on failure
+
+
+PYTHON CLIENT EXAMPLE:
+----------------------
+import requests
+from concurrent.futures import ThreadPoolExecutor
+import json
+
+API_URL = "http://100.97.88.105:8000"  # Tailscale IP
+POLICY = """... your policy text ..."""
+
+def classify_batch(items):
+    """Classify a batch of items. items = [{"id": ..., "content": ...}, ...]"""
+    response = requests.post(
+        f"{API_URL}/batch",
+        json={"policy": POLICY, "items": items},
+        timeout=300  # 5 min timeout for large batches
+    )
+    response.raise_for_status()
+    return response.json()
+
+def process_tweets(tweets, batch_size=100, workers=2):
+    """
+    tweets = [{"id": "...", "content": "..."}, ...]
+    """
+    results = []
+    batches = [tweets[i:i+batch_size] for i in range(0, len(tweets), batch_size)]
+    
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for batch_result in executor.map(classify_batch, batches):
+            results.extend(batch_result["results"])
+            print(f"Processed {len(results)}/{len(tweets)} "
+                  f"({batch_result['items_per_second']:.1f} items/sec)")
+    
+    return results
+
+# Usage:
+# tweets = [{"id": str(i), "content": row["text"]} for i, row in df.iterrows()]
+# results = process_tweets(tweets)
+
+
+CURL EXAMPLE:
+-------------
+curl -X POST http://100.97.88.105:8000/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "policy": "# Criteria\n\n## Definition of Labels\n\n### (HS): Hate Speech\n\n#### Includes\n- Slurs\n- Dehumanization",
+    "items": [
+      {"id": "1", "content": "Hello world"},
+      {"id": "2", "content": "Test message"}
+    ]
+  }'
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+1. Connection refused
+   - Check service is running: curl http://100.97.88.105:8000/health
+   - Verify Tailscale is connected: tailscale status
+   - Check you can ping: ping 100.97.88.105
+
+2. Timeout errors
+   - Increase timeout (batch of 100 can take 30-60 seconds)
+   - Reduce batch size if memory issues
+
+3. 503 Service Unavailable
+   - Model still loading (takes ~2 min after service start)
+   - Check logs: ssh to VM, run: tail -f ~/cope_inference/cope.log
+
+4. Slow performance
+   - Normal: ~2-3 items/sec on L4 GPU with 4-bit quantization
+   - Longer content = slower (more tokens to process)
+
+
+================================================================================
+CONTACT / SERVICE MANAGEMENT
+================================================================================
+
+Service VM Tailscale IP: 100.97.88.105 (coper-v1)
+Service VM GCP Internal IP: 10.162.0.3
+
+To restart service (SSH to VM):
+  cd ~/cope_inference && ./stop.sh && ./start.sh
+
+To view logs:
+  tail -f ~/cope_inference/cope.log
+
+================================================================================

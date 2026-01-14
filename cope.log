@@ -1,0 +1,24 @@
+INFO:     Started server process [7224]
+INFO:     Waiting for application startup.
+2026-01-14 01:06:18,902 - INFO - Starting CoPE-A-9B inference service...
+2026-01-14 01:06:18,902 - INFO - Configuring 4-bit quantization...
+2026-01-14 01:06:18,902 - INFO - Loading base model: google/gemma-2-9b
+`torch_dtype` is deprecated! Use `dtype` instead!
+2026-01-14 01:06:21,358 - INFO - We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards:   0%|          | 0/8 [00:00<?, ?it/s]Loading checkpoint shards:  12%|█▎        | 1/8 [00:25<02:59, 25.64s/it]Loading checkpoint shards:  25%|██▌       | 2/8 [00:51<02:33, 25.51s/it]Loading checkpoint shards:  38%|███▊      | 3/8 [01:16<02:06, 25.26s/it]Loading checkpoint shards:  50%|█████     | 4/8 [01:40<01:39, 24.98s/it]Loading checkpoint shards:  62%|██████▎   | 5/8 [02:04<01:14, 24.73s/it]Loading checkpoint shards:  75%|███████▌  | 6/8 [02:30<00:50, 25.17s/it]Loading checkpoint shards:  88%|████████▊ | 7/8 [02:56<00:25, 25.45s/it]Loading checkpoint shards: 100%|██████████| 8/8 [03:09<00:00, 21.30s/it]Loading checkpoint shards: 100%|██████████| 8/8 [03:09<00:00, 23.67s/it]
+2026-01-14 01:09:31,389 - INFO - Loading tokenizer: google/gemma-2-9b
+2026-01-14 01:09:32,639 - INFO - Applying CoPE adapter: zentropi-ai/cope-a-9b
+2026-01-14 01:09:37,173 - INFO - GPU memory - Allocated: 6.11 GB, Reserved: 9.13 GB
+2026-01-14 01:09:37,173 - INFO - Model loaded successfully!
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:60648 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32916 - "POST /batch HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50364 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.97.88.105:41482 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.97.88.105:34716 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.65.14.50:35176 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.65.14.50:35188 - "GET /health HTTP/1.1" 200 OK
+INFO:     100.65.14.50:55818 - "POST /batch HTTP/1.1" 200 OK
+INFO:     100.65.14.50:55818 - "POST /batch HTTP/1.1" 200 OK
+INFO:     100.65.14.50:55818 - "POST /batch HTTP/1.1" 200 OK
