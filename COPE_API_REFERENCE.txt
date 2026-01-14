@@ -117,25 +117,23 @@ Policies must follow this structure:
 RECOMMENDED USAGE FOR 2M TWEETS
 ================================================================================
 
-THROUGHPUT: ~2-3 items/second (varies by content length)
-ESTIMATED TIME: ~10-15 days for 2M tweets at full serial processing
+THROUGHPUT (vLLM backend): ~100-120 items/second with batching
+ESTIMATED TIME: ~5-6 hours for 2M tweets
+
+NOTE: Service now uses vLLM for high-throughput inference. Use start_vllm.sh.
 
 OPTIMIZATION STRATEGIES:
 
-1. USE BATCH ENDPOINT
-   - Send 100 items per request
-   - Reduces HTTP overhead significantly
+1. USE BATCH ENDPOINT WITH LARGE BATCHES
+   - Send 100-500 items per request for optimal throughput
+   - vLLM processes items in parallel using continuous batching
+   - Larger batches = higher throughput (up to ~120 items/sec)
 
-2. PARALLEL REQUESTS (carefully)
-   - The GPU processes one item at a time
-   - 2-4 concurrent batch requests may help hide network latency
-   - More than that will just queue and not improve throughput
+2. PARALLEL REQUESTS
+   - 2-4 concurrent batch requests can improve throughput further
+   - vLLM handles request queuing efficiently
 
-3. PRE-FILTER IF POSSIBLE
-   - If you can filter out obviously benign content beforehand, do so
-   - Only send content that needs classification
-
-4. CHECKPOINT PROGRESS
+3. CHECKPOINT PROGRESS
    - Save results frequently (every 10K items)
    - Track processed IDs to resume on failure
 
@@ -210,8 +208,9 @@ TROUBLESHOOTING
    - Check logs: ssh to VM, run: tail -f ~/cope_inference/cope.log
 
 4. Slow performance
-   - Normal: ~2-3 items/sec on L4 GPU with 4-bit quantization
-   - Longer content = slower (more tokens to process)
+   - With vLLM: expect ~100-120 items/sec with batching
+   - If seeing <10 items/sec, ensure you're using batch endpoint with 100+ items
+   - Longer content = slightly slower (more tokens to process)
 
 
 ================================================================================
@@ -222,7 +221,7 @@ Service VM Tailscale IP: 100.97.88.105 (coper-v1)
 Service VM GCP Internal IP: 10.162.0.3
 
 To restart service (SSH to VM):
-  cd ~/cope_inference && ./stop.sh && ./start.sh
+  cd ~/cope_inference && ./stop.sh && ./start_vllm.sh
 
 To view logs:
   tail -f ~/cope_inference/cope.log
