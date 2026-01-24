@@ -71,21 +71,32 @@ Response:
   "results": [
     {"id": "tweet_123", "label": 0, "raw_output": "0", "confidence": 0.98, "prob_positive": 0.02},
     {"id": "tweet_456", "label": 1, "raw_output": "1", "confidence": 0.94, "prob_positive": 0.94},
+    {"id": "tweet_789", "label": -1, "raw_output": "", "confidence": 0.0, "prob_positive": 0.0, "error": "Prompt too long (2083 tokens, max 2040)"},
     ...
   ],
-  "processed": 100,
-  "elapsed_seconds": 45.2,
-  "items_per_second": 2.21
+  "processed": 2,
+  "elapsed_seconds": 1.2,
+  "items_per_second": 1.67
 }
 
 RESPONSE FIELDS:
-- label: Binary classification (0 or 1)
+- label: Binary classification (0 or 1), or -1 if item was skipped
 - raw_output: The raw token output from the model
 - confidence: Probability the model assigned to its chosen answer (0.0-1.0)
 - prob_positive: Probability of label=1, useful for ranking or custom thresholds
+- error: (optional) Error message if item was skipped (e.g., prompt too long)
+
+SKIPPED ITEMS:
+Items with prompts exceeding 2040 tokens are skipped and returned with:
+- label: -1 (sentinel value)
+- error: Description of why the item was skipped
+- processed count excludes skipped items
+
+Check for skipped items: [r for r in results if r.get("error")]
 
 BATCH LIMITS:
-- Maximum 100 items per request
+- No hard limit on batch size (vLLM handles memory management)
+- Recommended: 100-500 items per request for optimal throughput
 - Results returned in same order as input
 - IDs are preserved for matching back to source data
 
@@ -125,10 +136,10 @@ Policies must follow this structure:
 RECOMMENDED USAGE FOR 2M TWEETS
 ================================================================================
 
-THROUGHPUT (vLLM backend): ~100-120 items/second with batching
+THROUGHPUT: ~100-120 items/second with batching
 ESTIMATED TIME: ~5-6 hours for 2M tweets
 
-NOTE: Service now uses vLLM for high-throughput inference. Use start_vllm.sh.
+SERVICE: vLLM backend with systemd (starts automatically on VM boot)
 
 OPTIMIZATION STRATEGIES:
 
@@ -184,7 +195,9 @@ def process_tweets(tweets, batch_size=100, workers=2):
 # tweets = [{"id": str(i), "content": row["text"]} for i, row in df.iterrows()]
 # results = process_tweets(tweets)
 
-# Using confidence scores:
+# Handling results:
+# - Check for skipped items: skipped = [r for r in results if r.get("error")]
+# - Get successful results: success = [r for r in results if r["label"] != -1]
 # - Filter uncertain predictions: [r for r in results if r["confidence"] < 0.7]
 # - Sort by positive probability: sorted(results, key=lambda r: r["prob_positive"], reverse=True)
 # - Custom threshold: label = 1 if r["prob_positive"] > 0.3 else 0
@@ -217,26 +230,60 @@ TROUBLESHOOTING
    - Reduce batch size if memory issues
 
 3. 503 Service Unavailable
-   - Model still loading (takes ~2 min after service start)
-   - Check logs: ssh to VM, run: tail -f ~/cope_inference/cope.log
+   - Model still loading (takes ~2-3 min after service start)
+   - Check status: sudo systemctl status cope-vllm
+   - Check logs: sudo journalctl -u cope-vllm -f
 
 4. Slow performance
-   - With vLLM: expect ~100-120 items/sec with batching
+   - Expect ~100-120 items/sec with batching
    - If seeing <10 items/sec, ensure you're using batch endpoint with 100+ items
    - Longer content = slightly slower (more tokens to process)
 
+5. Items returning label=-1 with error
+   - Content + policy combined exceeds 2040 token limit
+   - Consider shortening policy or filtering very long content
+
 
 ================================================================================
-CONTACT / SERVICE MANAGEMENT
+SERVICE MANAGEMENT (systemd)
 ================================================================================
 
 Service VM Tailscale IP: 100.97.88.105 (coper-v1)
 Service VM GCP Internal IP: 10.162.0.3
+Service name: cope-vllm
 
-To restart service (SSH to VM):
-  cd ~/cope_inference && ./stop.sh && ./start_vllm.sh
+The service starts automatically when the VM boots and cleanly releases
+GPU memory on shutdown/restart.
 
-To view logs:
-  tail -f ~/cope_inference/cope.log
+COMMANDS (SSH to VM):
+---------------------
+Check status:     sudo systemctl status cope-vllm
+Start service:    sudo systemctl start cope-vllm
+Stop service:     sudo systemctl stop cope-vllm
+Restart service:  sudo systemctl restart cope-vllm
+View logs:        sudo journalctl -u cope-vllm -f
+View recent logs: sudo journalctl -u cope-vllm -n 100
+
+INSTALLATION (already done):
+----------------------------
+cd ~/cope_inference && sudo ./install_service.sh
+
+UNINSTALL (revert to manual scripts):
+-------------------------------------
+cd ~/cope_inference && sudo ./uninstall_service.sh
+
+
+================================================================================
+DEPRECATED
+================================================================================
+
+The following are deprecated and should NOT be used:
+
+- cope_service.py        (old non-vLLM backend, ~10x slower)
+- start.sh               (manual start for old backend)
+- start_vllm.sh          (manual start, replaced by systemd service)
+- stop.sh                (manual stop, replaced by systemd service)
+- cope.log               (logs now in journald, use journalctl)
+- cope.pid               (not used with systemd)
 
 ================================================================================

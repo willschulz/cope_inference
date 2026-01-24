@@ -1,0 +1,35 @@
+[Unit]
+Description=CoPE-A-9B vLLM Inference Service
+Documentation=https://github.com/your-org/cope-inference
+After=network.target
+
+[Service]
+Type=simple
+User=wm.s.schulz
+Group=wm.s.schulz
+WorkingDirectory=/home/wm.s.schulz/cope_inference
+
+# Use conda environment's Python directly
+ExecStart=/opt/conda/envs/cope/bin/python /home/wm.s.schulz/cope_inference/cope_vllm_service.py
+
+# Graceful shutdown - give vLLM time to release GPU memory
+ExecStop=/bin/kill -TERM $MAINPID
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+
+# Environment
+Environment="PATH=/opt/conda/envs/cope/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+
+# Logging (journald)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cope-vllm
+
+[Install]
+WantedBy=multi-user.target

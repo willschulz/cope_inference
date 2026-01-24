@@ -31,6 +31,15 @@ MODEL_PATH = os.path.expanduser("~/cope_inference/cope-merged")
 # Global model state
 llm = None
 
+# Maximum prompt length (slightly below model's 2048 limit for safety buffer)
+MAX_PROMPT_TOKENS = 2040
+
+
+def get_prompt_token_count(prompt: str) -> int:
+    """Count tokens in a prompt using the model's tokenizer."""
+    tokenizer = llm.get_tokenizer()
+    return len(tokenizer.encode(prompt))
+
 
 def build_prompt(policy: str, content: str) -> str:
     """
@@ -182,6 +191,7 @@ class BatchResultItem(BaseModel):
     raw_output: str
     confidence: float = Field(..., description="Probability of the chosen token (0 or 1)")
     prob_positive: float = Field(..., description="Probability of label=1 (positive class)")
+    error: Optional[str] = Field(None, description="Error message if item was skipped (e.g., prompt too long)")
 
 
 class BatchResponse(BaseModel):
@@ -247,8 +257,17 @@ async def label_content(request: LabelRequest):
     if llm is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
     
+    prompt = build_prompt(request.policy, request.content)
+    
+    # Validate prompt length before inference
+    token_count = get_prompt_token_count(prompt)
+    if token_count > MAX_PROMPT_TOKENS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Prompt too long ({token_count} tokens, max {MAX_PROMPT_TOKENS})"
+        )
+    
     try:
-        prompt = build_prompt(request.policy, request.content)
         outputs = llm.generate([prompt], SAMPLING_PARAMS)
         raw_output = outputs[0].outputs[0].text.strip()
         label_value = parse_label(raw_output)
@@ -290,15 +309,33 @@ async def batch_label(request: BatchRequest):
     start_time = time.time()
     
     try:
-        # Build all prompts
-        prompts = [build_prompt(request.policy, item.content) for item in request.items]
+        # Separate valid vs too-long items
+        valid_items = []
+        skipped_results = []
         
-        # vLLM processes all prompts in parallel with continuous batching
-        outputs = llm.generate(prompts, SAMPLING_PARAMS)
+        for item in request.items:
+            prompt = build_prompt(request.policy, item.content)
+            token_count = get_prompt_token_count(prompt)
+            if token_count > MAX_PROMPT_TOKENS:
+                logger.warning(f"Skipping item {item.id}: prompt too long ({token_count} tokens)")
+                skipped_results.append(BatchResultItem(
+                    id=item.id,
+                    label=-1,  # Sentinel value indicating error
+                    raw_output="",
+                    confidence=0.0,
+                    prob_positive=0.0,
+                    error=f"Prompt too long ({token_count} tokens, max {MAX_PROMPT_TOKENS})"
+                ))
+            else:
+                valid_items.append((item, prompt))
         
-        # Parse results
+        # Process only valid prompts
+        prompts = [p for _, p in valid_items]
+        outputs = llm.generate(prompts, SAMPLING_PARAMS) if prompts else []
+        
+        # Parse results for valid items
         results = []
-        for item, output in zip(request.items, outputs):
+        for (item, _), output in zip(valid_items, outputs):
             raw_output = output.outputs[0].text.strip()
             label_value = parse_label(raw_output)
             confidence, prob_positive = extract_confidence(output)
@@ -310,12 +347,17 @@ async def batch_label(request: BatchRequest):
                 prob_positive=prob_positive
             ))
         
+        # Combine results (valid + skipped) preserving original order
+        all_results = {r.id: r for r in results + skipped_results}
+        final_results = [all_results[item.id] for item in request.items]
+        
         elapsed = time.time() - start_time
-        items_per_second = len(results) / elapsed if elapsed > 0 else 0.0
+        processed_count = len(results)  # Only count successfully processed items
+        items_per_second = processed_count / elapsed if elapsed > 0 else 0.0
         
         return BatchResponse(
-            results=results,
-            processed=len(results),
+            results=final_results,
+            processed=processed_count,
             elapsed_seconds=round(elapsed, 3),
             items_per_second=round(items_per_second, 2)
         )
