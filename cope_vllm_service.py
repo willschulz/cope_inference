@@ -7,6 +7,7 @@ Significantly faster than the standard transformers-based service.
 """
 
 import logging
+import math
 import time
 import os
 from contextlib import asynccontextmanager
@@ -109,73 +110,46 @@ def extract_confidence(output) -> tuple[float, float]:
         - confidence: probability of the chosen token
         - prob_positive: probability of "1" (positive class)
     """
-    import math
+    # Fast path: get logprobs for first generated token
+    logprobs_list = output.outputs[0].logprobs
+    if not logprobs_list:
+        # Fallback if no logprobs available
+        return 1.0, 0.5
     
-    # Default values if we can't extract logprobs
-    default_confidence = 1.0
-    default_prob_positive = 0.5
+    token_logprobs = logprobs_list[0]
     
-    try:
-        # Get the first (and only) generated token's logprobs
-        logprobs_list = output.outputs[0].logprobs
-        if not logprobs_list or len(logprobs_list) == 0:
-            return default_confidence, default_prob_positive
-        
-        # logprobs_list[0] contains the logprobs for the first generated token
-        # It's a dict mapping token_id -> Logprob object
-        token_logprobs = logprobs_list[0]
-        
-        # Find probabilities for "0" and "1" tokens
-        prob_0 = None
-        prob_1 = None
-        chosen_prob = None
-        
-        for token_id, logprob_obj in token_logprobs.items():
-            # logprob_obj has .logprob (float) and .decoded_token (str)
-            decoded = logprob_obj.decoded_token.strip()
-            prob = math.exp(logprob_obj.logprob)
-            
-            if decoded == "0":
-                prob_0 = prob
-            elif decoded == "1":
-                prob_1 = prob
-            
-            # The first entry is typically the chosen token
-            if chosen_prob is None:
-                chosen_prob = prob
-        
-        # Get the chosen token's probability as confidence
-        if chosen_prob is not None:
-            confidence = chosen_prob
-        else:
-            confidence = default_confidence
-        
-        # Calculate prob_positive
-        if prob_1 is not None and prob_0 is not None:
-            # Normalize to get calibrated probability between 0 and 1
-            total = prob_0 + prob_1
-            prob_positive = prob_1 / total if total > 0 else 0.5
-        elif prob_1 is not None:
-            prob_positive = prob_1
-        elif prob_0 is not None:
-            prob_positive = 1.0 - prob_0
-        else:
-            # Fall back based on chosen token
-            chosen_text = output.outputs[0].text.strip()
-            prob_positive = confidence if chosen_text.startswith("1") else (1.0 - confidence)
-        
-        return round(confidence, 4), round(prob_positive, 4)
-        
-    except Exception as e:
-        logger.warning(f"Could not extract logprobs: {e}")
-        return default_confidence, default_prob_positive
+    # Extract probabilities for "0" and "1" tokens
+    prob_0 = prob_1 = 0.0
+    first_prob = None
+    
+    for logprob_obj in token_logprobs.values():
+        decoded = logprob_obj.decoded_token
+        if decoded == "0":
+            prob_0 = math.exp(logprob_obj.logprob)
+        elif decoded == "1":
+            prob_1 = math.exp(logprob_obj.logprob)
+        if first_prob is None:
+            first_prob = math.exp(logprob_obj.logprob)
+    
+    # Confidence is the probability of whichever token was chosen
+    confidence = first_prob if first_prob is not None else 1.0
+    
+    # Normalize prob_positive between 0 and 1
+    total = prob_0 + prob_1
+    if total > 0:
+        prob_positive = prob_1 / total
+    else:
+        # Fallback: use chosen token
+        prob_positive = confidence if output.outputs[0].text == "1" else (1.0 - confidence)
+    
+    return confidence, prob_positive
 
 
 # Sampling params for classification (greedy, single token, with logprobs for confidence)
 SAMPLING_PARAMS = SamplingParams(
     temperature=0,
     max_tokens=1,
-    logprobs=5,  # Get top 5 token probabilities for confidence estimation
+    logprobs=2,  # Top 2 tokens (should capture both "0" and "1" for a classifier)
 )
 
 
