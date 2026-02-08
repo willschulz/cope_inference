@@ -1,6 +1,6 @@
 # Testing CoPE from a Client Machine
 
-This document describes **how to test the CoPE inference API from a client machine** (e.g. `datascience.manx-celsius.ts.net`). It is intended to be copy‑paste friendly and suitable for quick sanity checks as well as basic load testing.
+This document describes **how to test the CoPE inference API from a client machine**. It is intended to be copy‑paste friendly and suitable for quick sanity checks as well as basic load testing.
 
 ---
 
